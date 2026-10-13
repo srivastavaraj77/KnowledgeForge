@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'KnowledgeForge - Enterprise Agentic RAG on AWS App Runner (FastAPI Backend + Streamlit UI)'
+
+Parameters:
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Description: 'Primary Groq API Key for Llama 3.3 70B'
+
+  GroqFallbackApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: 'Fallback Groq API Key (optional)'
+
+  PortkeyApiKey:
+    Type: String
+    NoEcho: true
+    Description: 'Portkey LLM Gateway API Key'
+
+  QdrantApiKey:
+    Type: String
+    NoEcho: true
+    Description: 'Qdrant Cloud API Key'
+
+  QdrantClusterEndpoint:
+    Type: String
+    Description: 'Qdrant Cluster Endpoint URL (e.g. https://xxx.qdrant.io:6333)'
+
+  LogfireToken:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: 'Pydantic Logfire Observability Token'
+
+  LangsmithApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: 'LangSmith Tracing API Key'
+
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Description: 'Google Gemini API Key for 3072-dim embeddings'
+
+Resources:
+  # ECR Repository for Backend
+  BackendECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: knowledgeforge-backend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # ECR Repository for UI
+  UiECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: knowledgeforge-ui
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # App Runner Access Role for ECR
+  AppRunnerECRAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: KnowledgeForge-AppRunnerECRAccessRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - build.apprunner.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  # App Runner Backend Service
+  BackendAppRunnerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: knowledgeforge-backend
+      SourceConfiguration:
+        AutoDeploymentsEnabled: true
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt AppRunnerECRAccessRole.Arn
+        ImageRepository:
+          ImageIdentifier: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${BackendECRRepository}:latest'
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: '8080'
+            RuntimeEnvironmentVariables:
+              - Name: PORT
+                Value: '8080'
+              - Name: GROQ_API_KEY
+                Value: !Ref GroqApiKey
+              - Name: GROQ_FALLBACK_API_KEY
+                Value: !Ref GroqFallbackApiKey
+              - Name: PORTKEY_API_KEY
+                Value: !Ref PortkeyApiKey
+              - Name: QDRANT_API_KEY
+                Value: !Ref QdrantApiKey
+              - Name: QDRANT_CLUSTER_ENDPOINT
+                Value: !Ref QdrantClusterEndpoint
+              - Name: LOGFIRE_TOKEN
+                Value: !Ref LogfireToken
+              - Name: LANGSMITH_TRACING
+                Value: 'true'
+              - Name: LANGSMITH_API_KEY
+                Value: !Ref LangsmithApiKey
+              - Name: GEMINI_API_KEY
+                Value: !Ref GeminiApiKey
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /health
+        Interval: 10
+        Timeout: 5
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
+      InstanceConfiguration:
+        Cpu: 1 vCPU
+        Memory: 2 GB
+
+  # App Runner Streamlit UI Service
+  UiAppRunnerService:
+    Type: AWS::AppRunner::Service
+    DependsOn: BackendAppRunnerService
+    Properties:
+      ServiceName: knowledgeforge-ui
+      SourceConfiguration:
+        AutoDeploymentsEnabled: true
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt AppRunnerECRAccessRole.Arn
+        ImageRepository:
+          ImageIdentifier: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${UiECRRepository}:latest'
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: '8501'
+            RuntimeEnvironmentVariables:
+              - Name: PORT
+                Value: '8501'
+              - Name: BACKEND_URL
+                Value: !Sub 'https://${BackendAppRunnerService.ServiceUrl}'
+              - Name: LOGFIRE_TOKEN
+                Value: !Ref LogfireToken
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /_stcore/health
+        Interval: 10
+        Timeout: 5
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
+      InstanceConfiguration:
+        Cpu: 1 vCPU
+        Memory: 2 GB
+
+Outputs:
+  BackendApiUrl:
+    Description: 'Public URL for the FastAPI Backend API'
+    Value: !Sub 'https://${BackendAppRunnerService.ServiceUrl}'
+
+  ChatUiUrl:
+    Description: 'Public URL for the Streamlit Chat UI'
+    Value: !Sub 'https://${UiAppRunnerService.ServiceUrl}'

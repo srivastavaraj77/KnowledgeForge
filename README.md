@@ -164,6 +164,8 @@ streamlit run evals/app.py
 | 09 | [LLM Gateway](docs/09_LLM_GATEWAY.md) | Portkey routing, fallback, and observability |
 | 10 | [Evals](docs/10_EVALS.md) | RAGAS metrics theory and token budget |
 | 11 | [Evals Pipeline](docs/11_EVALS_PIPELINE.md) | Live eval pipeline and Streamlit demo |
+| 12 | [AWS App Runner Deployment](DOCS/AWS_DEPLOYMENT_GUIDE.md) | Production serverless deployment on AWS App Runner (Backend + UI) |
+| 13 | [AWS Free Tier EC2 Deployment](DOCS/AWS_FREE_TIER_EC2_DEPLOYMENT.md) | 100% Free deployment ($0.00/month) on EC2 t2.micro |
 
 ---
 

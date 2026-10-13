@@ -55,3 +55,8 @@ tenvv
 
 # Logs
 *.log
+# Local secrets and AWS private keys
+.env
+.env.*
+!.env.example
+*.pem

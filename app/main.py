@@ -6,8 +6,22 @@ import logfire
 import os
 from dotenv import load_dotenv
 
+# Load environment variables explicitly from KnowledgeForge root directory
+env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
 load_dotenv()
-logfire.configure(token=os.getenv("LOGFIRE_TOKEN"))
+
+# Initialize Logfire gracefully (handles missing/empty tokens and offline environments)
+logfire_token = os.getenv("LOGFIRE_TOKEN")
+try:
+    if logfire_token and logfire_token.strip():
+        logfire.configure(token=logfire_token.strip(), send_to_logfire="if-token-present")
+    else:
+        # Fall back to local credentials if logged in, or safe no-op mode
+        logfire.configure(send_to_logfire="if-token-present")
+except Exception as e:
+    print(f"⚠️ Logfire initialization notice: {e}")
 
 # Now safe to import app modules - logfire is already active
 from fastapi import FastAPI, Response
@@ -15,16 +29,25 @@ from app.agents.graph import rag_agent
 from app.guardrails import initialize_rails, guard
 
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 from typing import Optional
 
 
-# Initialize FastAPI
-app = FastAPI(title="Enterprise Agentic RAG API")
-
-
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize NeMo Guardrails on startup
     initialize_rails()
+    yield
+
+
+# Initialize FastAPI with modern lifespan handler
+app = FastAPI(title="Enterprise Agentic RAG API", lifespan=lifespan)
+
+# Instrument FastAPI with Logfire
+try:
+    logfire.instrument_fastapi(app)
+except Exception:
+    pass
 
 class QueryRequest(BaseModel):
     q: str
@@ -34,6 +57,11 @@ class QueryRequest(BaseModel):
 @app.get("/")
 def home():
     return {"message": "Enterprise LangGraph RAG API is live."}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 
 @app.get("/graph")
@@ -92,10 +120,21 @@ def query(request: QueryRequest):
             "sources": final_output.get("documents", [])
         }
     except Exception as e:
+        import traceback
+
+        # Print the complete traceback
+        traceback.print_exc()
+
+        # Print only the exception
+        print("\n========== EXCEPTION ==========")
+        print(e)
+        print("===============================\n")
+
         logfire.error(f"❌ Backend Execution Failed: {e}")
+
         return {
             "question": q,
-            "answer": "I apologize, but I encountered an internal error while processing your request. Please try again later.",
+            "answer": f"Internal Error: {str(e)}",
             "thought_process": ["Error encountered during execution."],
             "status": "error",
             "sources": []

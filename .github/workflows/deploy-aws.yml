@@ -1,0 +1,77 @@
+name: Deploy to AWS App Runner
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  BACKEND_REPO: knowledgeforge-backend
+  UI_REPO: knowledgeforge-ui
+
+jobs:
+  deploy:
+    name: Build & Deploy to AWS App Runner
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.backend
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.BACKEND_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and Push UI Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.ui
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.UI_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger App Runner Deployment
+        run: |
+          echo "Checking App Runner services..."
+          BACKEND_ARN=$(aws apprunner list-services --region ${{ env.AWS_REGION }} --query "ServiceSummaryList[?ServiceName=='${{ env.BACKEND_REPO }}'].ServiceArn" --output text)
+          UI_ARN=$(aws apprunner list-services --region ${{ env.AWS_REGION }} --query "ServiceSummaryList[?ServiceName=='${{ env.UI_REPO }}'].ServiceArn" --output text)
+
+          if [ -n "$BACKEND_ARN" ] && [ "$BACKEND_ARN" != "None" ]; then
+            echo "Starting deployment for Backend ($BACKEND_ARN)..."
+            aws apprunner start-deployment --service-arn "$BACKEND_ARN" --region ${{ env.AWS_REGION }}
+          fi
+
+          if [ -n "$UI_ARN" ] && [ "$UI_ARN" != "None" ]; then
+            echo "Starting deployment for UI ($UI_ARN)..."
+            aws apprunner start-deployment --service-arn "$UI_ARN" --region ${{ env.AWS_REGION }}
+          fi
+          echo "Deployment triggered successfully."
